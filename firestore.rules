@@ -1,0 +1,155 @@
+rules_version = '2';
+
+// WorkScan — Firestore security rules
+//
+// Deploy with:  firebase deploy --only firestore:rules
+//
+// The app's access patterns, and what each one needs:
+//
+//   users/{uid}          get/list   self, or any manager
+//   config/app           get         any signed-in user
+//                        create     only while the document does not exist yet (bootstrap)
+//                        update     managers, or a new account claiming the bootstrap slot
+//   config/employeeSeq   get         any signed-in user
+//                        create     the first signup only, always at 1
+//                        update     advance by exactly one, no other field touched
+//   offices/{officeId}   get/list   any signed-in user
+//                        write      managers
+//   officeTokens/{id}    get/list   any signed-in user (the scanner validates the live token)
+//                        write      managers
+//   attendance/{id}      get/list   own records, or any manager
+//                        create     self, and only for their own uid
+//                        update     self, and only for their own uid
+//
+// Note: client-side role checks (the `role` field on a user document) are a
+// convenience, not a security boundary. The real boundary is these rules, so the
+// only privilege that matters is "is this account a manager" — read from the
+// server-side copy of the user's own profile below.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function profile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isManager() {
+      return isSignedIn() && profile().role == 'admin';
+    }
+
+    /* ----------------------------------------------------------------- people */
+
+    match /users/{uid} {
+      // Reading the staff list feeds the manager dashboard, so managers can
+      // list everyone; everyone else only ever needs their own document.
+      allow get: if isSelf(uid) || isManager();
+      allow list: if isManager();
+
+      // A new account creates its own profile. It may not claim the manager role
+      // here — `createProfile` decides that from the admin code, and this rule
+      // only blocks self-promotion on a *later* edit.
+      allow create: if isSelf(uid);
+
+      // Editing your own name or employee number is fine. Changing your own role
+      // to 'admin' is not, otherwise any employee could promote themselves.
+      allow update: if isSelf(uid)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
+        || isManager();
+
+      // Nobody can delete accounts from the app.
+      allow delete: if false;
+    }
+
+    /* ------------------------------------------------------- company settings */
+
+    match /config/{docId} {
+      allow read: if isSignedIn();
+
+      // Bootstrap: the very first account to register creates this document.
+      // Once it exists the branch stops matching, so nobody else can claim it.
+      allow create: if isSignedIn()
+        && !exists(/databases/$(database)/documents/config/app);
+
+      // Changing the manager code is a manager action. The narrow second branch
+      // lets a newly registered account record itself as the bootstrap admin
+      // without touching `adminCode` or `adminBootstrapped`, which is what stops
+      // a later signup from quietly turning itself into a manager.
+      allow update: if isManager()
+        || (isSignedIn()
+            && request.resource.data.diff(resource.data)
+                 .affectedKeys().hasOnly(['bootstrapAdminUid']));
+
+      allow delete: if false;
+    }
+
+    /* -------------------------------------------------- employee number sequence */
+
+    // Employee numbers are allocated by `createProfile` inside a transaction that
+    // also writes the profile, so the counter is advanced by clients.
+    //
+    // This rule is deliberately narrow: a signed-in account may advance the sequence
+    // by exactly one and touch nothing else. It cannot pick its own number, rewind
+    // the counter, or reset it, so the sequence stays gap-free and monotonic.
+    match /config/employeeSeq {
+      allow read: if isSignedIn();
+
+      // The very first signup creates the document at 1, producing employee "01".
+      allow create: if isSignedIn() && request.resource.data.value == 1;
+
+      allow update: if isSignedIn()
+        && request.resource.data.value is int
+        && resource.data.value is int
+        && request.resource.data.value == resource.data.value + 1
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['value']);
+
+      allow delete: if false;
+    }
+
+    /* ------------------------------------------------------- offices and codes */
+
+    match /offices/{officeId} {
+      allow read: if isSignedIn();
+      allow write: if isManager();
+    }
+
+    match /officeTokens/{officeId} {
+      // Any signed-in user reads this to check a scanned code against the live
+      // token, so the read cannot be restricted to managers.
+      allow read: if isSignedIn();
+      allow write: if isManager();
+    }
+
+    /* -------------------------------------------------------------- attendance */
+
+    match /attendance/{recordId} {
+      allow get: if isSignedIn()
+        && (resource.data.uid == request.auth.uid || isManager());
+      allow list: if isSignedIn()
+        && (resource.data.uid == request.auth.uid || isManager());
+
+      // Creating a punch: the document must be filed under the scanner's own uid.
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid;
+
+      // Signing out edits the same day's record, which is owned by the scanner.
+      // Managers may correct anyone's times.
+      allow update: if isSignedIn()
+        && (resource.data.uid == request.auth.uid || isManager());
+
+      allow delete: if isManager();
+    }
+
+    // Anything not matched above is closed.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

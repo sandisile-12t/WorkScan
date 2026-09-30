@@ -3,12 +3,8 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      "@/*": [
-        "./src/*"
-      ],
-      "@/assets/*": [
-        "./assets/*"
-      ]
+      "@/*": ["./src/*"],
+      "@/assets/*": ["./assets/*"]
     }
   },
   "include": [
@@ -16,5 +12,6 @@
     "**/*.tsx",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
-, "src/app/_layout.jsx"  ]
+  ],
+  "exclude": ["node_modules", "dist"]
 }
