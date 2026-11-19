@@ -3,7 +3,6 @@ import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -11,13 +10,11 @@ import {
 } from 'react-native';
 
 import { Screen } from '@/components/Screen';
-import { Badge, Banner, Button, Card, EmptyState, Field, StatTile } from '@/components/ui';
+import { Badge, Banner, Button, Card, EmptyState, StatTile } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
 import {
-  getAdminCode,
   listAttendanceInRange,
   listStaff,
-  setAdminCode,
   type AttendanceRecord,
 } from '@/lib/attendance';
 import { COMPANY_NAME } from '@/lib/firebase';
@@ -49,9 +46,6 @@ export default function AdminScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [codeModal, setCodeModal] = useState(false);
-  const [adminCodeDraft, setAdminCodeDraft] = useState('');
-  const [savingCode, setSavingCode] = useState(false);
 
   const range = useMemo(() => PRESETS.find((p) => p.key === preset)!.range(), [preset]);
 
@@ -112,29 +106,6 @@ export default function AdminScreen() {
       Alert.alert('Export failed', (error as Error).message);
     } finally {
       setExporting(false);
-    }
-  };
-
-  const openAdminCode = async () => {
-    try {
-      setAdminCodeDraft(await getAdminCode());
-    } catch {
-      setAdminCodeDraft('');
-    }
-    setSavingCode(false);
-    setCodeModal(true);
-  };
-
-  const saveAdminCode = async () => {
-    if (!adminCodeDraft.trim()) return;
-    setSavingCode(true);
-    try {
-      await setAdminCode(adminCodeDraft);
-      setCodeModal(false);
-    } catch (error) {
-      Alert.alert('Could not save', (error as Error).message);
-    } finally {
-      setSavingCode(false);
     }
   };
 
@@ -228,12 +199,6 @@ export default function AdminScreen() {
               variant="secondary"
               onPress={() => router.push('/qr-code')}
             />
-            <Button
-              label="Manager code"
-              icon="key-outline"
-              variant="ghost"
-              onPress={openAdminCode}
-            />
           </View>
 
           <Banner
@@ -244,48 +209,6 @@ export default function AdminScreen() {
         </>
       )}
 
-      <Modal
-        visible={codeModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setCodeModal(false)}
-      >
-        <Pressable style={styles.modalBackdrop} onPress={() => setCodeModal(false)}>
-          <Pressable style={styles.modalCard} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.modalTitle}>Manager code</Text>
-            <Text style={styles.modalBody}>
-              Colleagues who choose “Manager” when registering must enter this code. Anyone holding it
-              can see attendance data and export spreadsheets.
-            </Text>
-            <Field
-              label="Code"
-              icon="key-outline"
-              placeholder="e.g. WORKS-2026"
-              value={adminCodeDraft}
-              onChangeText={setAdminCodeDraft}
-              autoCapitalize="characters"
-              autoCorrect={false}
-              returnKeyType="done"
-              onSubmitEditing={saveAdminCode}
-            />
-            <View style={styles.modalActions}>
-              <Button
-                label="Cancel"
-                variant="ghost"
-                onPress={() => setCodeModal(false)}
-                style={styles.flexBtn}
-              />
-              <Button
-                label="Save"
-                onPress={saveAdminCode}
-                loading={savingCode}
-                disabled={!adminCodeDraft.trim()}
-                style={styles.flexBtn}
-              />
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
     </Screen>
   );
 }
@@ -358,21 +281,4 @@ const styles = StyleSheet.create({
   rowHoursOpen: { color: colors.warning },
   more: { ...typography.muted, textAlign: 'center', padding: spacing.md },
   adminActions: { gap: spacing.sm, marginTop: spacing.lg, marginBottom: spacing.md },
-
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(11,27,43,0.5)',
-    justifyContent: 'center',
-    padding: spacing.lg,
-  },
-  modalCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    gap: spacing.md,
-  },
-  modalTitle: { ...typography.h2 },
-  modalBody: { ...typography.muted },
-  modalActions: { flexDirection: 'row', gap: spacing.sm },
-  flexBtn: { flex: 1 },
 });

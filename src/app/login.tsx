@@ -1,7 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Redirect, useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type TextInputInstance,
+} from 'react-native';
 
 import { Screen } from '@/components/Screen';
 import { Banner, Button, Field } from '@/components/ui';
@@ -24,8 +30,8 @@ export default function LoginScreen() {
   const [notice, setNotice] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
 
-  const emailRef = useRef<TextInput>(null);
-  const passwordRef = useRef<TextInput>(null);
+  const emailRef = useRef<TextInputInstance>(null);
+  const passwordRef = useRef<TextInputInstance>(null);
 
   if (user) return <Redirect href="/dashboard" />;
 

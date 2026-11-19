@@ -1,7 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Redirect, useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type TextInputInstance,
+} from 'react-native';
 
 import { Screen } from '@/components/Screen';
 import { Banner, Button, Field } from '@/components/ui';
@@ -11,7 +17,7 @@ import { colors, radius, spacing, typography } from '@/theme';
 
 const ROLES = [
   { value: 'employee' as const, label: 'Employee', hint: 'I scan in and out each day' },
-  { value: 'admin' as const, label: 'Manager', hint: 'I also need the dashboard and reports' },
+  { value: 'admin' as const, label: 'Manager', hint: 'Can view all staff and reports' },
 ];
 
 export default function SignupScreen() {
@@ -23,15 +29,14 @@ export default function SignupScreen() {
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [role, setRole] = useState<'employee' | 'admin'>('employee');
-  const [adminCode, setAdminCode] = useState('');
   const [secure, setSecure] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
 
-  const emailRef = useRef<TextInput>(null);
-  const passwordRef = useRef<TextInput>(null);
-  const confirmRef = useRef<TextInput>(null);
+  const emailRef = useRef<TextInputInstance>(null);
+  const passwordRef = useRef<TextInputInstance>(null);
+  const confirmRef = useRef<TextInputInstance>(null);
 
   if (user) return <Redirect href="/dashboard" />;
 
@@ -39,15 +44,13 @@ export default function SignupScreen() {
   const emailError = touched && !email.includes('@') ? 'Enter a valid work email' : null;
   const passwordError = touched && password.length < 8 ? 'Use at least 8 characters' : null;
   const confirmError = touched && confirm !== password ? 'Passwords do not match' : null;
-  const codeError = touched && role === 'admin' && !adminCode.trim() ? 'Enter the code from your manager' : null;
 
   const canSubmit =
     !busy &&
     fullName.trim().length > 0 &&
     email.includes('@') &&
     password.length >= 8 &&
-    confirm === password &&
-    (role === 'employee' || adminCode.trim().length > 0);
+    confirm === password;
 
   const handleSubmit = async () => {
     setTouched(true);
@@ -60,7 +63,7 @@ export default function SignupScreen() {
         fullName,
         email,
         password,
-        adminCode: role === 'admin' ? adminCode : undefined,
+        role,
       });
       router.replace('/dashboard');
     } catch (err) {
@@ -184,26 +187,6 @@ export default function SignupScreen() {
           })}
         </View>
       </View>
-
-      {role === 'admin' ? (
-        <Field
-          label="Manager code"
-          icon="key-outline"
-          placeholder="Provided by your company"
-          value={adminCode}
-          onChangeText={setAdminCode}
-          onSubmitEditing={handleSubmit}
-          error={codeError}
-          autoCapitalize="characters"
-          autoCorrect={false}
-          returnKeyType="go"
-          hint={
-            touched && !adminCode.trim()
-              ? undefined
-              : 'The first person to register always becomes a manager. Later managers need this code.'
-          }
-        />
-      ) : null}
 
       <View style={styles.submit}>
         <Button

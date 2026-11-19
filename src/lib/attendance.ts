@@ -41,7 +41,6 @@ const ATTENDANCE = 'attendance';
 const OFFICES = 'offices';
 const TOKENS = 'officeTokens';
 const USERS = 'users';
-const CONFIG = 'config';
 
 /** Used when no office document exists yet. Kept in sync with `DEFAULT_OFFICE_ID`. */
 export const DEFAULT_OFFICE_FALLBACK = DEFAULT_OFFICE_ID;
@@ -294,13 +293,4 @@ export async function listStaff(): Promise<UserProfile[]> {
     role: d.data().role === 'admin' ? ('admin' as const) : ('employee' as const),
     createdAt: null,
   }));
-}
-
-export async function getAdminCode(): Promise<string> {
-  const snapshot = await getDoc(doc(db, CONFIG, 'app'));
-  return (snapshot.data() as { adminCode?: string } | undefined)?.adminCode ?? '';
-}
-
-export async function setAdminCode(code: string): Promise<void> {
-  await setDoc(doc(db, CONFIG, 'app'), { adminCode: code.trim().toUpperCase() }, { merge: true });
 }

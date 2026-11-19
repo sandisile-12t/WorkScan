@@ -11,7 +11,6 @@ const messagingSenderId = process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID;
 const appId = process.env.EXPO_PUBLIC_FIREBASE_APP_ID;
 
 export const COMPANY_NAME = process.env.EXPO_PUBLIC_COMPANY_NAME ?? 'WorkScan';
-export const BOOTSTRAP_ADMIN_CODE = process.env.EXPO_PUBLIC_BOOTSTRAP_ADMIN_CODE ?? 'WORKS-ADMIN';
 export const DEFAULT_OFFICE_ID = process.env.EXPO_PUBLIC_DEFAULT_OFFICE_ID ?? 'head-office';
 
 export const firebaseConfig = {
@@ -31,9 +30,9 @@ const app: FirebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebas
  * Auth is initialised explicitly with AsyncStorage persistence so the user stays
  * signed in across cold starts.
  *
- * `getAuth` is tried first because it returns the instance for an app that has
- * already been initialised (a Fast Refresh reload, for example) and throws
- * otherwise — whereas `initializeAuth` throws if called twice on the same app.
+ * `initializeAuth` must be tried first: on React Native, `getAuth` creates an
+ * in-memory instance when one does not exist yet. During Fast Refresh, reuse the
+ * existing instance if Firebase reports that it has already been initialised.
  *
  * Import from `@firebase/*` rather than the `firebase/*` umbrella package on
  * purpose. The umbrella's subpath packages declare only `main`/`browser`/`module`
@@ -45,9 +44,17 @@ const app: FirebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebas
  */
 export const auth: Auth = (() => {
   try {
-    return getAuth(app);
-  } catch {
     return initializeAuth(app, { persistence: getReactNativePersistence(AsyncStorage) });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'auth/already-initialized'
+    ) {
+      return getAuth(app);
+    }
+
+    throw error;
   }
 })();
 

@@ -96,6 +96,9 @@ a single field and sorted on the client, so no composite index is needed.
 npm start
 ```
 
+The standard npm start commands hide Expo's development tools button (the floating
+gear icon). Run `npx expo start` directly when you need the developer menu.
+
 **Expo Go works.** All four native modules this app uses are bundled in Expo Go for
 SDK 57 — `expo-camera`, `expo-print` and `expo-sharing` all list `expo-go` in their
 supported platforms, and `expo-file-system` does too. So `npm start` plus a scan from
@@ -119,16 +122,14 @@ a layout-preview convenience, not a test platform.
 
 ### 7. First run
 
-The **first account to register always becomes a manager** — this is what guarantees
-somebody can reach the admin screen on a fresh install. From then on, anyone choosing
-"Manager" at sign-up must supply the manager code, which a manager can change under
-**Admin → Manager code**.
+Choose **Manager** during signup to get manager access. No manager code is required.
+Choose **Employee** for a staff account.
 
 ## Everyday commands
 
 | Command | What it does |
 | --- | --- |
-| `npm start` | Start the dev server |
+| `npm start` | Start the dev server without the development tools button |
 | `npm run lint` | ESLint via `expo lint` |
 | `npm run typecheck` | TypeScript, generating router types first |
 | `npm run router-types` | Regenerate `.expo/types/router.d.ts` by itself |
@@ -143,7 +144,6 @@ report dozens of false failures. Rerun `npm run router-types` after adding a rou
 | Path | Contents |
 | --- | --- |
 | `users/{uid}` | Name, email, employee number, role |
-| `config/app` | Manager code and bootstrap state |
 | `config/employeeSeq` | The employee number sequence (a single counter) |
 | `offices/{officeId}` | Office name and location |
 | `officeTokens/{officeId}` | The current day's rotating token |
@@ -182,8 +182,8 @@ office id, token, date and issue time. On scan the token is compared against the
 - Role checks in the UI are a convenience. The real boundary is `firestore.rules`,
   which decides "is this account a manager" from the server-side copy of the user's own
   profile.
-- Anyone holding the manager code can see everyone's attendance and export the
-  register. Treat it like a password and change it if it leaks.
+- Anyone can choose "Manager" during signup and gain access to all attendance and
+  reports. Use this only in a trusted environment.
 - The Excel export is written by a small hand-rolled workbook writer
   (`src/lib/xlsx.ts`) using `fflate`, so there is no heavyweight spreadsheet
   dependency in the app bundle.

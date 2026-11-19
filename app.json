@@ -1,7 +1,8 @@
+
 {
   "expo": {
     "name": "WorkScan",
-    "slug": "WorkScan",
+    "slug": "workscan",
     "version": "1.0.0",
     "orientation": "portrait",
     "scheme": "workscan",
@@ -16,7 +17,13 @@
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.INTERNET"
+      ]
     },
     "web": {
       "output": "static",
@@ -51,6 +58,15 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "be2a70e8-78ae-4e07-9084-aae2ef1a7094"
+      }
+      },
+    "owner": "sandisile-12t"
+    },
+    "owner": "sandisile-12t"
   }
-}
+

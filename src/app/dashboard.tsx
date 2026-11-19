@@ -7,7 +7,6 @@ import { Screen } from '@/components/Screen';
 import { Badge, Banner, Button, Card } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
 import { getTodayRecord, type AttendanceRecord } from '@/lib/attendance';
-import { COMPANY_NAME } from '@/lib/firebase';
 import { formatHours, formatLongDate, formatTime, hoursBetween, todayKey } from '@/lib/date';
 import { colors, radius, spacing, typography } from '@/theme';
 
@@ -39,7 +38,7 @@ export default function DashboardScreen() {
     }, [load])
   );
 
-  if (!user) return <Redirect href="/login" />;
+  if (!user) return <Redirect href="/" />;
 
   const hours = hoursBetween(record?.checkInISO ?? null, record?.checkOutISO ?? null);
   const state = !record
@@ -51,7 +50,18 @@ export default function DashboardScreen() {
   const confirmSignOut = () => {
     Alert.alert('Sign out?', 'You will need your email and password to sign back in.', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: () => signOut() },
+      {
+        text: 'Sign out',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await signOut();
+            router.replace('/');
+          } catch (error) {
+            Alert.alert('Could not sign out', (error as Error).message);
+          }
+        },
+      },
     ]);
   };
 
@@ -77,9 +87,15 @@ export default function DashboardScreen() {
       }
     >
       <View style={styles.identity}>
-        <View style={styles.avatar}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open account settings"
+          hitSlop={6}
+          onPress={() => router.push('/settings')}
+          style={({ pressed }) => [styles.avatar, pressed && styles.avatarPressed]}
+        >
           <Text style={styles.avatarText}>{initials(user.fullName)}</Text>
-        </View>
+        </Pressable>
         <View style={styles.identityText}>
           <Text style={styles.name}>{user.fullName || 'Your name'}</Text>
           <Text style={styles.meta}>
@@ -154,17 +170,6 @@ export default function DashboardScreen() {
         />
       ) : null}
 
-      <Card style={styles.footerCard}>
-        <View style={styles.footerRow}>
-          <Ionicons name="business-outline" size={18} color={colors.primary} />
-          <View style={styles.flex}>
-            <Text style={styles.footerTitle}>{COMPANY_NAME}</Text>
-            <Text style={styles.footerBody}>
-              Scan the code printed by your manager each time you enter or leave the office.
-            </Text>
-          </View>
-        </View>
-      </Card>
     </Screen>
   );
 }
@@ -189,6 +194,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  avatarPressed: { opacity: 0.8 },
   identity: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: 12 },
   avatar: {
     width: 44,
@@ -215,8 +221,4 @@ const styles = StyleSheet.create({
   actions: { gap: spacing.xs, marginVertical: 12 },
   actionRow: { flexDirection: 'row', gap: spacing.sm },
   flexBtn: { flex: 1 },
-  footerCard: { marginTop: spacing.xs },
-  footerRow: { flexDirection: 'row', gap: spacing.md, alignItems: 'flex-start' },
-  footerTitle: { ...typography.h3, fontSize: 15 },
-  footerBody: { ...typography.muted },
 });

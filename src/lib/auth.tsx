@@ -1,24 +1,27 @@
 import {
+  EmailAuthProvider,
   createUserWithEmailAndPassword,
   deleteUser,
   onAuthStateChanged,
+  reauthenticateWithCredential,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signOut as firebaseSignOut,
   updateProfile,
   type User,
+  verifyBeforeUpdateEmail,
 } from '@firebase/auth';
-import { doc, runTransaction, serverTimestamp } from '@firebase/firestore';
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { doc, runTransaction, serverTimestamp, updateDoc } from '@firebase/firestore';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
-import { auth, db, isFirebaseConfigured, BOOTSTRAP_ADMIN_CODE } from '@/lib/firebase';
+import { auth, db, isFirebaseConfigured } from '@/lib/firebase';
 import type { UserProfile, UserRole } from '@/lib/types';
 
 type SignUpInput = {
   fullName: string;
   email: string;
   password: string;
-  adminCode?: string;
+  role: UserRole;
 };
 
 type AuthContextValue = {
@@ -28,13 +31,14 @@ type AuthContextValue = {
   configured: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (input: SignUpInput) => Promise<void>;
+  updateName: (fullName: string) => Promise<void>;
+  requestEmailChange: (email: string, currentPassword: string) => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const CONFIG_DOC = 'config/app';
 const EMPLOYEE_SEQ_DOC = 'config/employeeSeq';
 const USERS = 'users';
 
@@ -55,6 +59,7 @@ export const friendlyAuthError = (error: unknown): Error => {
     'auth/invalid-credential': 'Incorrect email or password.',
     'auth/email-already-in-use': 'An account already exists with that email address.',
     'auth/weak-password': 'Choose a password with at least 8 characters.',
+    'auth/requires-recent-login': 'Please confirm your current password and try again.',
     'auth/too-many-requests': 'Too many attempts. Please try again in a few minutes.',
     'auth/network-request-failed': 'Network error. Check your connection and try again.',
     'auth/operation-not-allowed':
@@ -79,53 +84,18 @@ const asProfile = (uid: string, data: Record<string, unknown>): UserProfile => (
   createdAt: (data.createdAt as UserProfile['createdAt']) ?? null,
 });
 
-type CompanyConfig = {
-  adminCode?: string;
-  adminBootstrapped?: boolean;
-  bootstrapAdminUid?: string;
-  createdAt?: unknown;
-};
-
 /**
- * Seeds the initial manager code from `EXPO_PUBLIC_BOOTSTRAP_ADMIN_CODE` the first
- * time the config document is created, so a fresh install already has a working code.
- */
-const seedConfig = (current: CompanyConfig): CompanyConfig => ({
-  ...current,
-  adminCode: current.adminCode ?? BOOTSTRAP_ADMIN_CODE,
-  createdAt: current.createdAt ?? serverTimestamp(),
-});
-
-/**
- * Creates the Firestore profile for a brand new account and decides its role.
- *
- * The role rule is:
- *   - the very first account to register always becomes an admin (otherwise nobody
- *     could ever reach the dashboard);
- *   - afterwards only a matching admin code grants the admin role.
- *
- * It runs in a transaction so two people registering at the same instant cannot
- * both claim the first-admin slot.
+ * Creates a new profile with the role explicitly selected during signup.
  */
 const createProfile = async (
   uid: string,
   input: SignUpInput
 ): Promise<UserProfile> => {
   const userRef = doc(db, USERS, uid);
-  const configRef = doc(db, CONFIG_DOC);
   const seqRef = doc(db, EMPLOYEE_SEQ_DOC);
 
   return runTransaction(db, async (tx) => {
-    const [configSnap, seqSnap] = await Promise.all([tx.get(configRef), tx.get(seqRef)]);
-    const current: CompanyConfig = configSnap.exists()
-      ? ((configSnap.data() ?? {}) as CompanyConfig)
-      : {};
-
-    const alreadyHasAdmin = Boolean(current.adminBootstrapped);
-    const adminCode = current.adminCode ?? BOOTSTRAP_ADMIN_CODE;
-    const supplied = (input.adminCode ?? '').trim().toUpperCase();
-    const matchesCode = adminCode.length > 0 && supplied === adminCode.toUpperCase();
-    const role: UserRole = !alreadyHasAdmin || matchesCode ? 'admin' : 'employee';
+    const seqSnap = await tx.get(seqRef);
 
     // Employee numbers are allocated here rather than typed by the user. The counter
     // lives in this same transaction, so the number and the profile are written
@@ -139,23 +109,12 @@ const createProfile = async (
       fullName: input.fullName.trim(),
       email: input.email.trim().toLowerCase(),
       employeeId,
-      role,
+      role: input.role,
       createdAt: null,
     };
 
-    // One write per document: Firestore transactions dislike a doc being set twice.
     tx.set(userRef, { ...profile, createdAt: serverTimestamp() });
     tx.set(seqRef, { value: seqValue + 1 });
-    tx.set(
-      configRef,
-      {
-        ...seedConfig(current),
-        adminCode,
-        adminBootstrapped: true,
-        bootstrapAdminUid: uid,
-      },
-      { merge: true }
-    );
 
     return profile;
   });
@@ -164,34 +123,29 @@ const createProfile = async (
 /** Backfills a profile for an account that exists in Auth but not yet in Firestore. */
 const backfillProfile = async (uid: string, email: string): Promise<UserProfile> => {
   const userRef = doc(db, USERS, uid);
-  const configRef = doc(db, CONFIG_DOC);
   const seqRef = doc(db, EMPLOYEE_SEQ_DOC);
 
   return runTransaction(db, async (tx) => {
-    const [existing, configSnap, seqSnap] = await Promise.all([
-      tx.get(userRef),
-      tx.get(configRef),
-      tx.get(seqRef),
-    ]);
+    const [existing, seqSnap] = await Promise.all([tx.get(userRef), tx.get(seqRef)]);
 
     const seqValue = (seqSnap.data()?.value as number | undefined) ?? 0;
 
     if (existing.exists()) {
       const current = asProfile(uid, existing.data() ?? {});
-      if (current.employeeId) return current;
+      const emailFromAuth = email.trim().toLowerCase();
+      const nextEmail = emailFromAuth || current.email;
+      if (current.employeeId && current.email === nextEmail) return current;
 
-      // Accounts predating automatic numbers have none stored, so issue the next one.
-      const employeeId = formatEmployeeId(seqValue + 1);
-      tx.set(userRef, { employeeId }, { merge: true });
-      tx.set(seqRef, { value: seqValue + 1 });
-      return { ...current, employeeId };
+      const employeeId = current.employeeId || formatEmployeeId(seqValue + 1);
+      const updates = {
+        employeeId,
+        ...(current.email !== nextEmail ? { email: nextEmail } : {}),
+      };
+      tx.set(userRef, updates, { merge: true });
+      if (!current.employeeId) tx.set(seqRef, { value: seqValue + 1 });
+      return { ...current, ...updates };
     }
 
-    const current: CompanyConfig = configSnap.exists()
-      ? ((configSnap.data() ?? {}) as CompanyConfig)
-      : {};
-
-    const role: UserRole = current.adminBootstrapped ? 'employee' : 'admin';
     const employeeId = formatEmployeeId(seqValue + 1);
 
     const profile: UserProfile = {
@@ -199,21 +153,12 @@ const backfillProfile = async (uid: string, email: string): Promise<UserProfile>
       fullName: email.split('@')[0] ?? 'New user',
       email,
       employeeId,
-      role,
+      role: 'employee',
       createdAt: null,
     };
 
     tx.set(userRef, { ...profile, createdAt: serverTimestamp() });
     tx.set(seqRef, { value: seqValue + 1 });
-    tx.set(
-      configRef,
-      {
-        ...seedConfig(current),
-        adminBootstrapped: true,
-        bootstrapAdminUid: uid,
-      },
-      { merge: true }
-    );
 
     return profile;
   });
@@ -223,6 +168,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
   const [resolved, setResolved] = useState(false);
+  const signUpInProgress = useRef(false);
 
   // Derived rather than stored: when Firebase is unconfigured there is nothing
   // to wait for, so the app is never "initialising".
@@ -242,6 +188,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         return;
       }
+
+      if (signUpInProgress.current) return;
 
       try {
         const profile = await backfillProfile(next.uid, next.email ?? '');
@@ -275,20 +223,58 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       );
     }
 
-    const { user: created } = await createUserWithEmailAndPassword(
-      auth,
-      input.email.trim().toLowerCase(),
-      input.password
-    ).catch((error: unknown) => {
-      throw friendlyAuthError(error);
-    });
+    signUpInProgress.current = true;
+    try {
+      const { user: created } = await createUserWithEmailAndPassword(
+        auth,
+        input.email.trim().toLowerCase(),
+        input.password
+      ).catch((error: unknown) => {
+        throw friendlyAuthError(error);
+      });
+
+      try {
+        await updateProfile(created, { displayName: input.fullName.trim() });
+        const profile = await createProfile(created.uid, input);
+        setFirebaseUser(created);
+        setUser(profile);
+        setResolved(true);
+      } catch (error) {
+        // Never leave an Auth account stranded without a profile document.
+        await deleteUser(created).catch(() => undefined);
+        throw friendlyAuthError(error);
+      }
+    } finally {
+      signUpInProgress.current = false;
+    }
+  }, []);
+
+  const updateName = useCallback(async (fullName: string) => {
+    const currentUser = auth.currentUser;
+    const normalizedName = fullName.trim();
+    if (!currentUser) throw new Error('You must be signed in to update your profile.');
+    if (!normalizedName) throw new Error('Enter your name.');
+
+    await updateDoc(doc(db, USERS, currentUser.uid), { fullName: normalizedName });
+    setUser((current) => (current ? { ...current, fullName: normalizedName } : current));
+  }, []);
+
+  const requestEmailChange = useCallback(async (email: string, currentPassword: string) => {
+    const currentUser = auth.currentUser;
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!currentUser?.email) throw new Error('You must be signed in to change your email.');
+    if (!normalizedEmail.includes('@')) throw new Error('Enter a valid email address.');
+    if (normalizedEmail === currentUser.email.toLowerCase()) {
+      throw new Error('Enter an email address different from your current one.');
+    }
 
     try {
-      await updateProfile(created, { displayName: input.fullName.trim() });
-      await createProfile(created.uid, input);
+      await reauthenticateWithCredential(
+        currentUser,
+        EmailAuthProvider.credential(currentUser.email, currentPassword)
+      );
+      await verifyBeforeUpdateEmail(currentUser, normalizedEmail);
     } catch (error) {
-      // Never leave an Auth account stranded without a profile document.
-      await deleteUser(created).catch(() => undefined);
       throw friendlyAuthError(error);
     }
   }, []);
@@ -314,10 +300,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       configured: isFirebaseConfigured,
       signIn,
       signUp,
+      updateName,
+      requestEmailChange,
       resetPassword,
       signOut,
     }),
-    [user, firebaseUser, initialising, signIn, signUp, resetPassword, signOut]
+    [user, firebaseUser, initialising, signIn, signUp, updateName, requestEmailChange, resetPassword, signOut]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -7,6 +7,7 @@ import {
   TextInput,
   View,
   type StyleProp,
+  type TextInputInstance,
   type TextInputProps,
   type ViewStyle,
 } from 'react-native';
@@ -89,7 +90,7 @@ type FieldProps = TextInputProps & {
   accessory?: React.ReactNode;
 };
 
-export const Field = forwardRef<TextInput, FieldProps>(function Field(
+export const Field = forwardRef<TextInputInstance, FieldProps>(function Field(
   { label, icon, error, hint, accessory, style, ...inputProps },
   ref
 ) {

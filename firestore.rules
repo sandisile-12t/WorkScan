@@ -7,9 +7,6 @@ rules_version = '2';
 // The app's access patterns, and what each one needs:
 //
 //   users/{uid}          get/list   self, or any manager
-//   config/app           get         any signed-in user
-//                        create     only while the document does not exist yet (bootstrap)
-//                        update     managers, or a new account claiming the bootstrap slot
 //   config/employeeSeq   get         any signed-in user
 //                        create     the first signup only, always at 1
 //                        update     advance by exactly one, no other field touched
@@ -21,10 +18,8 @@ rules_version = '2';
 //                        create     self, and only for their own uid
 //                        update     self, and only for their own uid
 //
-// Note: client-side role checks (the `role` field on a user document) are a
-// convenience, not a security boundary. The real boundary is these rules, so the
-// only privilege that matters is "is this account a manager" — read from the
-// server-side copy of the user's own profile below.
+// Manager signup is intentionally open: any user may choose the manager role.
+// These rules enforce that role when granting access to attendance and office data.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -53,10 +48,10 @@ service cloud.firestore {
       allow get: if isSelf(uid) || isManager();
       allow list: if isManager();
 
-      // A new account creates its own profile. It may not claim the manager role
-      // here — `createProfile` decides that from the admin code, and this rule
-      // only blocks self-promotion on a *later* edit.
-      allow create: if isSelf(uid);
+      // Signup intentionally lets users choose their role. A later update cannot
+      // change that role unless the account is already a manager.
+      allow create: if isSelf(uid)
+        && request.resource.data.role in ['admin', 'employee'];
 
       // Editing your own name or employee number is fine. Changing your own role
       // to 'admin' is not, otherwise any employee could promote themselves.
@@ -65,28 +60,6 @@ service cloud.firestore {
         || isManager();
 
       // Nobody can delete accounts from the app.
-      allow delete: if false;
-    }
-
-    /* ------------------------------------------------------- company settings */
-
-    match /config/{docId} {
-      allow read: if isSignedIn();
-
-      // Bootstrap: the very first account to register creates this document.
-      // Once it exists the branch stops matching, so nobody else can claim it.
-      allow create: if isSignedIn()
-        && !exists(/databases/$(database)/documents/config/app);
-
-      // Changing the manager code is a manager action. The narrow second branch
-      // lets a newly registered account record itself as the bootstrap admin
-      // without touching `adminCode` or `adminBootstrapped`, which is what stops
-      // a later signup from quietly turning itself into a manager.
-      allow update: if isManager()
-        || (isSignedIn()
-            && request.resource.data.diff(resource.data)
-                 .affectedKeys().hasOnly(['bootstrapAdminUid']));
-
       allow delete: if false;
     }
 
